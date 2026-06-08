@@ -177,6 +177,13 @@ export default function LarkNavbar({ isConnected }) {
         </div>
       </div>
 
+      {/* Center tagline */}
+      <div className="hidden md:flex items-center" style={{ color: 'var(--lark-text-muted)' }}>
+        <span className="text-xs font-medium tracking-wide">
+          Hum it. Play it.
+        </span>
+      </div>
+
       {/* Right area */}
       <div className="flex items-center gap-2">
         {/* Theme toggle */}
