@@ -8,6 +8,7 @@ import { Ticks, secondsToTicks } from '@audiotool/nexus/utils';
 import basicPitchModelUrl from '@spotify/basic-pitch/model/model.json?url';
 import { analyzeRhythmFromBlob } from '@/lib/hum-rhythm';
 import { isDrumInstrument } from '@/lib/lark-instruments';
+import { isHumCleaningEnabled, resolveHumBlob } from '@/lib/hum-audio-prep';
 
 const BASIC_PITCH_SAMPLE_RATE = 22050;
 const MAX_TRANSCRIBE_SEC = 45;
@@ -117,8 +118,16 @@ function notesToPlans(notes, { instrument, mood, bpm, durationSec }) {
  * Transcribe humming to MIDI note plans with Spotify Basic Pitch (free, in-browser).
  * Falls back to rhythm-only on failure.
  */
-export async function transcribeHumToNotes(blob, { instrument, mood, onProgress } = {}) {
-  const rhythm = await analyzeRhythmFromBlob(blob);
+export async function transcribeHumToNotes(blob, {
+  instrument,
+  mood,
+  onProgress,
+  cleanHum = isHumCleaningEnabled(),
+} = {}) {
+  const prep = await resolveHumBlob(blob, { onProgress, enabled: cleanHum });
+  const analysisBlob = prep.blob;
+
+  const rhythm = await analyzeRhythmFromBlob(analysisBlob);
   const bpm = rhythm.bpm ?? 120;
   const durationSec = Math.min(rhythm.durationSec ?? MAX_TRANSCRIBE_SEC, MAX_TRANSCRIBE_SEC);
 
@@ -127,7 +136,7 @@ export async function transcribeHumToNotes(blob, { instrument, mood, onProgress 
     const basicPitch = await loadBasicPitchModel();
 
     onProgress?.('Listening to your hum…');
-    const audioBuffer = await blobToMonoBuffer22050(blob);
+    const audioBuffer = await blobToMonoBuffer22050(analysisBlob);
 
     const frames = [];
     const onsets = [];
@@ -172,6 +181,8 @@ export async function transcribeHumToNotes(blob, { instrument, mood, onProgress 
       notePlans,
       regionDuration,
       noteCount,
+      cleaned: prep.cleaned,
+      cleanStats: prep.stats,
     };
   } catch (err) {
     const rhythmPlans = rhythm.onsets.map((onset, index) => {
@@ -197,6 +208,8 @@ export async function transcribeHumToNotes(blob, { instrument, mood, onProgress 
       ),
       noteCount: rhythmPlans.length,
       fallbackReason: err instanceof Error ? err.message : String(err),
+      cleaned: prep.cleaned,
+      cleanStats: prep.stats,
     };
   }
 }

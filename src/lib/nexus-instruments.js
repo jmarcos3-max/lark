@@ -3,6 +3,7 @@ import {
   NEXUS_DEVICE_BY_INSTRUMENT,
   nexusDeviceCreateOptions,
 } from '@/lib/lark-instruments';
+import { HUM_REFERENCE_STUDIO_NAME } from '@/lib/lark-copy';
 import {
   ensureMixerChannelInTransaction,
   primeDeviceForPlayback,
@@ -44,6 +45,16 @@ export function findLarkDevices(nexusDoc) {
     }
   }
   return results;
+}
+
+/** Prior hum-reference audio devices (raw recording on timeline — not played). */
+export function findLarkHumReferenceDevices(nexusDoc) {
+  const devices = nexusDoc.queryEntities?.ofTypes('audioDevice')?.get?.() ?? [];
+  return devices.filter((device) => {
+    const name = displayNameOf(device);
+    return typeof name === 'string'
+      && (name === HUM_REFERENCE_STUDIO_NAME || name.startsWith('Lark · Hum'));
+  });
 }
 
 /** Lark-tagged mixer strips from prior transforms. */

@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 async function decodeBlob(ctx, blob) {
   const arrayBuffer = await blob.arrayBuffer();
   return ctx.decodeAudioData(arrayBuffer.slice(0));
 }
 
-/** Web Audio mixer for ElevenLabs mood layer MP3s only (hum stays in Studio transform). */
-export function useWowPassPreview({ moodLayers = [] }) {
+/** Web Audio mixer for ElevenLabs instrumental render + optional mood layer MP3s. */
+export function useWowPassPreview({ moodLayers = [], instrumentalRender = null }) {
   const ctxRef = useRef(null);
   const buffersRef = useRef([]);
   const gainsRef = useRef(new Map());
@@ -87,6 +87,18 @@ export function useWowPassPreview({ moodLayers = [] }) {
     return ctxRef.current;
   }, []);
 
+  const previewLayers = useMemo(() => {
+    const layers = [];
+    if (instrumentalRender?.url) {
+      layers.push({
+        id: instrumentalRender.id,
+        label: instrumentalRender.label ?? 'Your instrumental',
+        url: instrumentalRender.url,
+      });
+    }
+    return [...layers, ...moodLayers];
+  }, [instrumentalRender, moodLayers]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -100,7 +112,7 @@ export function useWowPassPreview({ moodLayers = [] }) {
       setCurrentTime(0);
       pauseAtRef.current = 0;
 
-      if (!moodLayers.length) {
+      if (!previewLayers.length) {
         buffersRef.current = [];
         gainsRef.current = new Map();
         setTracks([]);
@@ -114,17 +126,22 @@ export function useWowPassPreview({ moodLayers = [] }) {
         const nextTracks = [];
         let maxDuration = 0;
 
-        for (const layer of moodLayers) {
+        for (const layer of previewLayers) {
           if (!layer?.url) continue;
           const res = await fetch(layer.url);
           if (!res.ok) continue;
           const buffer = await decodeBlob(ctx, await res.blob());
           if (cancelled) return;
+          const volume = layer.label === 'Your instrumental'
+            ? 0.92
+            : layer.label === 'impact'
+              ? 0.55
+              : 0.68;
           nextTracks.push({
             id: layer.id,
             label: layer.label,
             buffer,
-            volume: layer.label === 'impact' ? 0.55 : 0.68,
+            volume,
             enabled: true,
           });
           maxDuration = Math.max(maxDuration, buffer.duration);
@@ -151,7 +168,7 @@ export function useWowPassPreview({ moodLayers = [] }) {
     return () => {
       cancelled = true;
     };
-  }, [moodLayers, ensureContext, stopSources, stopMeter]);
+  }, [previewLayers, ensureContext, stopSources, stopMeter]);
 
   useEffect(() => () => {
     stopSources();

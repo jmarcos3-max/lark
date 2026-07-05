@@ -4,7 +4,7 @@ const SESSION_KEY = 'lark-studio-session-project';
 /** @type {Window | null} */
 let studioWindowRef = null;
 
-function projectIdFromStudioUrl(dawUrl) {
+export function projectIdFromStudioUrl(dawUrl) {
   try {
     return new URL(dawUrl).searchParams.get('project') ?? dawUrl;
   } catch {
@@ -23,20 +23,39 @@ function persistStudioWindow(studioWindow, projectId) {
 }
 
 function readPersistedStudioWindow() {
-  if (studioWindowRef && !studioWindowRef.closed) return studioWindowRef;
-  if (typeof window !== 'undefined' && window.__larkStudioWindow && !window.__larkStudioWindow.closed) {
+  if (studioWindowRef?.closed) {
+    studioWindowRef = null;
+    sessionStorage.removeItem(SESSION_KEY);
+  }
+  if (studioWindowRef) return studioWindowRef;
+
+  if (typeof window !== 'undefined' && window.__larkStudioWindow) {
+    if (window.__larkStudioWindow.closed) {
+      window.__larkStudioWindow = null;
+      sessionStorage.removeItem(SESSION_KEY);
+      return null;
+    }
     studioWindowRef = window.__larkStudioWindow;
     return studioWindowRef;
   }
   return null;
 }
 
+/** Project id the Studio tab was last associated with (same-origin or last navigate). */
+export function getStudioSessionProjectId() {
+  return sessionStorage.getItem(SESSION_KEY);
+}
+
 function studioWindowIsOnProject(studioWindow, projectId) {
+  if (!studioWindow || !projectId) return false;
   try {
     const href = studioWindow.location.href;
-    return href !== 'about:blank' && href.includes(projectId);
+    if (href === 'about:blank' || href === '' || href === 'about:blank#blocked') {
+      return false;
+    }
+    return href.includes(projectId);
   } catch {
-    // Cross-origin — tab is on Audiotool (not a blank placeholder).
+    // Cross-origin — trust last-known project for this named tab.
     return sessionStorage.getItem(SESSION_KEY) === projectId;
   }
 }
@@ -79,68 +98,68 @@ export function focusAudiotoolStudioTab() {
 }
 
 /**
- * Explicit "Open in Studio" — reuse tab when possible, otherwise open once.
+ * Reuse the Lark Studio tab: navigate only when the project changed.
  * @param {string | null | undefined} dawUrl
+ * @param {{ focus?: boolean, openIfMissing?: boolean }} [options]
  * @returns {Window | null}
  */
-export function openAudiotoolStudio(dawUrl) {
+export function syncStudioTabToProject(dawUrl, {
+  focus = false,
+  openIfMissing = false,
+} = {}) {
   if (!dawUrl || typeof window === 'undefined') return null;
 
   const projectId = projectIdFromStudioUrl(dawUrl);
   const existing = resolveStudioWindow();
 
-  if (existing) {
-    if (!studioWindowIsOnProject(existing, projectId)) {
-      existing.location.href = dawUrl;
-    }
-    persistStudioWindow(existing, projectId);
-    existing.focus();
-    return existing;
+  if (!existing) {
+    if (!openIfMissing) return null;
+    const opened = window.open(dawUrl, STUDIO_WINDOW_NAME);
+    persistStudioWindow(opened, projectId);
+    opened?.focus?.();
+    return opened ?? null;
   }
 
-  const opened = window.open(dawUrl, STUDIO_WINDOW_NAME);
-  persistStudioWindow(opened, projectId);
-  opened?.focus?.();
-  return opened ?? null;
+  if (!studioWindowIsOnProject(existing, projectId)) {
+    existing.location.href = dawUrl;
+  }
+
+  persistStudioWindow(existing, projectId);
+  if (focus) existing.focus();
+  return existing;
 }
 
 /**
- * On transform click — open Studio only the first time for a project.
- * Re-transforms (new layers/instruments) focus the existing tab only.
+ * Explicit "Open in Studio" — reuse tab when possible, navigate if project differs.
  * @param {string | null | undefined} dawUrl
- * @returns {{ action: 'opened' | 'focused' | 'navigated' | 'skipped', window: Window | null }}
+ * @returns {Window | null}
  */
+export function openAudiotoolStudio(dawUrl) {
+  return syncStudioTabToProject(dawUrl, { focus: true, openIfMissing: true });
+}
+
+/**
+ * After transform: focus an in-sync tab (live Nexus update) or open/navigate.
+ * Never reloads when Studio is already on this project.
+ * @param {string | null | undefined} dawUrl
+ * @returns {Window | null}
+ */
+export function openStudioAfterTransform(dawUrl) {
+  return syncStudioTabToProject(dawUrl, { focus: true, openIfMissing: true });
+}
+
+/**
+ * When Lark connects to a different project — point the Studio tab at it.
+ * @param {string | null | undefined} dawUrl
+ */
+export function onLarkProjectChanged(dawUrl) {
+  syncStudioTabToProject(dawUrl, { focus: false, openIfMissing: false });
+}
+
+/** @deprecated Use openStudioAfterTransform */
 export function prepareStudioForTransform(dawUrl) {
-  if (!dawUrl || typeof window === 'undefined') {
-    return { action: 'skipped', window: null };
-  }
-
-  const projectId = projectIdFromStudioUrl(dawUrl);
-  const sessionProject = sessionStorage.getItem(SESSION_KEY);
-  const existing = resolveStudioWindow();
-
-  if (existing) {
-    if (!studioWindowIsOnProject(existing, projectId)) {
-      existing.location.href = dawUrl;
-      persistStudioWindow(existing, projectId);
-      existing.focus();
-      return { action: 'navigated', window: existing };
-    }
-    existing.focus();
-    persistStudioWindow(existing, projectId);
-    return { action: 'focused', window: existing };
-  }
-
-  // Studio was opened earlier this session but the tab is gone — don't spawn another
-  // on layer/instrument updates; user can click "Open in Audiotool Studio" if needed.
-  if (sessionProject === projectId) {
-    return { action: 'skipped', window: null };
-  }
-
-  const opened = window.open(dawUrl, STUDIO_WINDOW_NAME);
-  persistStudioWindow(opened, projectId);
-  opened?.focus?.();
-  return { action: 'opened', window: opened ?? null };
+  const win = openStudioAfterTransform(dawUrl);
+  return { action: win ? 'opened' : 'skipped', window: win };
 }
 
 /** @deprecated Use prepareStudioForTransform */

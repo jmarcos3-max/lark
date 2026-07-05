@@ -1,4 +1,5 @@
 import React from 'react';
+import { STUDIO_NAV_TAGLINE } from '@/lib/lark-copy';
 import { ChevronDown, Loader2, Mic, Music, Piano } from 'lucide-react';
 import { ThemeToggle } from '@/components/lark/LarkNavbar';
 import { useTheme } from '@/lib/ThemeContext';
@@ -262,7 +263,7 @@ export default function LarkLoginView({
               </span>
             </p>
             <p className="text-xs transition-colors duration-300" style={{ color: 'var(--lark-text-muted)' }}>
-              Hum it. Play it.
+              {STUDIO_NAV_TAGLINE}
             </p>
           </div>
         </div>

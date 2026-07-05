@@ -1,20 +1,27 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import LarkNavbar from '@/components/lark/LarkNavbar';
 import LarkLoginView from '@/components/lark/LarkLoginView';
+import LarkOnboarding from '@/components/lark/LarkOnboarding';
 import AudioCaptureCard from '@/components/lark/AudioCaptureCard';
 import ParameterMatrixCard from '@/components/lark/ParameterMatrixCard';
-import PlaybackEngineCard from '@/components/lark/PlaybackEngineCard';
+import ProductionBriefCard from '@/components/lark/ProductionBriefCard';
 import StudioHealthCard from '@/components/lark/StudioHealthCard';
 import ProjectLibraryPanel from '@/components/lark/ProjectLibraryPanel';
 import { addRawAudioEntry, getRawAudioBlob } from '@/lib/raw-audio-library';
 import { useAudiotool } from '@/lib/AudiotoolContext';
-import { sanitizeStudioLayers, sanitizeWowPassLayers } from '@/lib/lark-instruments';
-import { studioUrlForProject } from '@/lib/lark-project-metadata';
+import { sanitizeStudioLayers } from '@/lib/lark-instruments';
 import {
-  focusAudiotoolStudioTab,
-  prepareStudioForTransform,
-} from '@/lib/open-audiotool-studio';
+  isGmPresetInstrument,
+  normalizeGmPresetSlug,
+} from '@/lib/nexus-gm-presets';
+import { studioUrlForProject } from '@/lib/lark-project-metadata';
+import { openStudioAfterTransform, onLarkProjectChanged } from '@/lib/open-audiotool-studio';
 import { useAudiotoolProjects } from '@/lib/useAudiotoolProjects';
+import { useProductionBrief } from '@/lib/useProductionBrief';
+import {
+  isOnboardingComplete,
+  ONBOARDING_REPLAY_EVENT,
+} from '@/lib/lark-onboarding';
 
 export default function Lark() {
   const {
@@ -53,6 +60,7 @@ export default function Lark() {
 }
 
 function LarkWorkspace() {
+  const { client: audiotoolClient } = useAudiotool();
   const {
     larkProject,
     patchLarkProject,
@@ -68,15 +76,9 @@ function LarkWorkspace() {
     deleteCloudProject,
     renameProject,
     transformHummingToInstrument,
-    generateMoodLayers,
-    importWowPassToStudio,
     setProjectError,
     projectSuccess,
     transformStatus,
-    moodLayers,
-    isGeneratingMoodLayers,
-    isImportingWowLayers,
-    wowImportStatus,
   } = useAudiotoolProjects();
 
   const [isProcessing, setIsProcessing] = useState(false);
@@ -84,8 +86,19 @@ function LarkWorkspace() {
   const [refreshHistory, setRefreshHistory] = useState(0);
   const [importedAudio, setImportedAudio] = useState(null);
   const [activeRawAudioId, setActiveRawAudioId] = useState(null);
-  const [lastTransformBpm, setLastTransformBpm] = useState(null);
   const [studioHealthReport, setStudioHealthReport] = useState(null);
+  const [briefApplied, setBriefApplied] = useState(false);
+  const [onboardingOpen, setOnboardingOpen] = useState(() => !isOnboardingComplete());
+  const captureColumnRef = useRef(null);
+  const studioColumnRef = useRef(null);
+  const briefColumnRef = useRef(null);
+  const transformSectionRef = useRef(null);
+  const onboardingTargets = {
+    capture: captureColumnRef,
+    studio: studioColumnRef,
+    brief: briefColumnRef,
+    transform: transformSectionRef,
+  };
   const importBlobUrlRef = useRef(null);
   const larkProjectRef = useRef(larkProject);
   /** Session humming — survives project switches (cloud metadata may not store blob URLs). */
@@ -102,6 +115,48 @@ function LarkWorkspace() {
     const blob = activeHumRef.current?.blob ?? null;
     return { url, blob };
   }, [larkProject.source_audio_url, importedAudio?.url]);
+
+  const {
+    analysis,
+    briefText,
+    isAnalyzing,
+    analyzeStatus,
+    analyzeError,
+    handleBriefChange,
+    handleRefreshBrief,
+  } = useProductionBrief({
+    getActiveHumSource,
+    larkProject,
+    patchLarkProject,
+  });
+
+  useEffect(() => {
+    setBriefApplied(false);
+  }, [larkProject.source_audio_url, analysis?.text]);
+
+  useEffect(() => {
+    const openTour = () => setOnboardingOpen(true);
+    window.addEventListener(ONBOARDING_REPLAY_EVENT, openTour);
+    return () => window.removeEventListener(ONBOARDING_REPLAY_EVENT, openTour);
+  }, []);
+
+  const handleApplyBriefSuggestions = (suggestions) => {
+    if (!suggestions) return;
+    if (!larkProject.audiotoolName) {
+      setProjectError('Select or create an Audiotool project first (Studio column, Step 2).');
+      return;
+    }
+    patchLarkProject({
+      target_instrument: suggestions.instrument,
+      selected_mood: suggestions.mood,
+      studio_layers: sanitizeStudioLayers(
+        suggestions.studioLayers ?? [],
+        suggestions.instrument,
+      ),
+    });
+    setBriefApplied(true);
+    setProjectError(null);
+  };
 
   const revokeImportBlobUrl = useCallback(() => {
     if (importBlobUrlRef.current?.startsWith('blob:')) {
@@ -161,9 +216,20 @@ function LarkWorkspace() {
   }, [patchLarkProject, revokeImportBlobUrl, setProjectError]);
 
   const handleInstrumentChange = (nextInstrument) => {
+    const keepSlug = isGmPresetInstrument(nextInstrument)
+      && larkProject.target_instrument === nextInstrument
+      ? larkProject.gm_preset_slug
+      : null;
     patchLarkProject({
       target_instrument: nextInstrument,
       studio_layers: sanitizeStudioLayers(larkProject.studio_layers, nextInstrument),
+      gm_preset_slug: normalizeGmPresetSlug(nextInstrument, keepSlug),
+    });
+  };
+
+  const handleGmPresetChange = (slug) => {
+    patchLarkProject({
+      gm_preset_slug: normalizeGmPresetSlug(larkProject.target_instrument, slug),
     });
   };
 
@@ -177,16 +243,6 @@ function LarkWorkspace() {
     });
   };
 
-  const handleWowPassLayerToggle = (layer) => {
-    const current = larkProject.wow_pass_layers ?? [];
-    const next = current.includes(layer)
-      ? current.filter((item) => item !== layer)
-      : [...current, layer];
-    patchLarkProject({
-      wow_pass_layers: sanitizeWowPassLayers(next),
-    });
-  };
-
   const handleMoodChange = (mood) => {
     patchLarkProject({ selected_mood: mood });
   };
@@ -196,7 +252,7 @@ function LarkWorkspace() {
     const name = title?.trim();
     if (!name) return;
     try {
-      await createNewProject({
+      const created = await createNewProject({
         title: name,
         target_instrument: null,
         selected_mood: null,
@@ -204,6 +260,9 @@ function LarkWorkspace() {
         source_audio_url: null,
         elevenlabs_output_url: null,
       });
+      if (created?.dawUrl) {
+        onLarkProjectChanged(created.dawUrl);
+      }
       setRefreshHistory((n) => n + 1);
     } catch {
       // error surfaced via projectError
@@ -217,6 +276,9 @@ function LarkWorkspace() {
       : null;
     try {
       const opened = await openProject(projectName);
+      if (opened?.dawUrl) {
+        onLarkProjectChanged(opened.dawUrl);
+      }
       if (sessionHum?.url) {
         patchLarkProject({ source_audio_url: sessionHum.url });
         setProjectError(null);
@@ -239,6 +301,7 @@ function LarkWorkspace() {
       await saveProject({
         title: larkProject.title,
         target_instrument: larkProject.target_instrument,
+        gm_preset_slug: larkProject.gm_preset_slug,
         selected_mood: larkProject.selected_mood,
         studio_layers: larkProject.studio_layers,
         wow_pass_layers: larkProject.wow_pass_layers,
@@ -261,9 +324,6 @@ function LarkWorkspace() {
 
     const project = larkProjectRef.current;
     const dawUrl = project.dawUrl ?? studioUrlForProject(project.audiotoolName);
-    if (dawUrl) {
-      prepareStudioForTransform(dawUrl);
-    }
 
     setIsProcessing(true);
     setProjectError(null);
@@ -272,13 +332,14 @@ function LarkWorkspace() {
         sourceUrl,
         sourceBlob,
         instrument: project.target_instrument,
+        gmPresetSlug: project.gm_preset_slug,
         studioLayers: project.studio_layers,
         mood: project.selected_mood,
         audiotoolName: project.audiotoolName,
       });
-      focusAudiotoolStudioTab();
-      if (Number.isFinite(result?.bpm)) {
-        setLastTransformBpm(result.bpm);
+      const studioUrl = result?.dawUrl ?? dawUrl;
+      if (studioUrl) {
+        openStudioAfterTransform(studioUrl);
       }
       if (result) {
         setStudioHealthReport({
@@ -306,38 +367,6 @@ function LarkWorkspace() {
     }
   };
 
-  const handleGenerateMoodLayers = async () => {
-    const { url: sourceUrl, blob: sourceBlob } = getActiveHumSource();
-    if (!sourceUrl) {
-      setProjectError('Record or import humming first.');
-      return;
-    }
-    try {
-      await generateMoodLayers({
-        sourceUrl,
-        sourceBlob,
-        noteBpm: lastTransformBpm,
-        layerTypes: larkProject.wow_pass_layers,
-      });
-      setRefreshHistory((n) => n + 1);
-    } catch {
-      // error in projectError
-    }
-  };
-
-  const handleImportWowPass = async () => {
-    const dawUrl = larkProject.dawUrl ?? studioUrlForProject(larkProject.audiotoolName);
-    if (dawUrl) {
-      prepareStudioForTransform(dawUrl);
-    }
-    try {
-      await importWowPassToStudio({ noteBpm: lastTransformBpm });
-      focusAudiotoolStudioTab();
-    } catch {
-      // error in projectError
-    }
-  };
-
   return (
     <div
       className="min-h-screen font-grotesk"
@@ -345,27 +374,32 @@ function LarkWorkspace() {
     >
       <LarkNavbar />
 
+      <LarkOnboarding
+        open={onboardingOpen}
+        onClose={() => setOnboardingOpen(false)}
+        targets={onboardingTargets}
+      />
+
       <main className="px-6 pb-8 pt-4 max-w-[1600px] mx-auto">
-        <div className="grid grid-cols-12 gap-4 mb-4">
-          <div className="col-span-4">
+        <div className="grid grid-cols-12 gap-4 mb-4 items-start">
+          <div ref={captureColumnRef} className="col-span-4 self-stretch">
             <AudioCaptureCard
               onAudioReady={handleAudioReady}
               importedAudio={importedAudio}
             />
           </div>
 
-          <div className="col-span-4">
+          <div ref={studioColumnRef} className="col-span-5 flex flex-col gap-4">
             <ParameterMatrixCard
               instrument={larkProject.target_instrument}
               mood={larkProject.selected_mood}
-              studioLayers={larkProject.studio_layers ?? []}
-              wowPassLayers={larkProject.wow_pass_layers ?? []}
-              onInstrumentChange={handleInstrumentChange}
               onMoodChange={handleMoodChange}
+              gmPresetSlug={larkProject.gm_preset_slug}
+              studioLayers={larkProject.studio_layers ?? []}
+              onInstrumentChange={handleInstrumentChange}
+              onGmPresetChange={handleGmPresetChange}
               onStudioLayerToggle={handleStudioLayerToggle}
-              onWowPassLayerToggle={handleWowPassLayerToggle}
               onAutomate={handleAutomate}
-              onGenerateMoodLayers={handleGenerateMoodLayers}
               onNewProject={handleNewProject}
               onConnectProject={handleOpenProject}
               onSave={handleSave}
@@ -374,37 +408,44 @@ function LarkWorkspace() {
               projectError={projectError}
               projectSuccess={projectSuccess}
               transformStatus={transformStatus}
-              isGeneratingMoodLayers={isGeneratingMoodLayers}
               isAuthenticated={isAuthenticated}
               onLogin={login}
+              audiotoolClient={audiotoolClient}
               cloudProjects={cloudProjects}
               onRefreshProjects={refreshProjectList}
               hasAudio={Boolean(getActiveHumSource().url)}
               onTransformHint={setProjectError}
               hasInstrument={!!larkProject.target_instrument}
-              hasMood={!!larkProject.selected_mood}
               currentProject={larkProject}
               activeProjectName={larkProject.audiotoolName}
+              transformSectionRef={transformSectionRef}
+            />
+            <StudioHealthCard
+              currentProject={larkProject}
+              report={studioHealthReport}
+              projectError={null}
             />
           </div>
 
-          <div className="col-span-4">
-            <div className="h-full flex flex-col gap-4">
-              <StudioHealthCard
-                currentProject={larkProject}
-                report={studioHealthReport}
-                projectError={projectError}
-              />
-              <PlaybackEngineCard
-                moodLayers={moodLayers}
-                isGeneratingMoodLayers={isGeneratingMoodLayers}
-                isProcessing={isProcessing}
-                isImportingWowLayers={isImportingWowLayers}
-                wowImportStatus={wowImportStatus}
-                onImportToStudio={handleImportWowPass}
-                dawUrl={larkProject.dawUrl}
-              />
-            </div>
+          <div ref={briefColumnRef} className="col-span-3 flex flex-col gap-4">
+            <ProductionBriefCard
+              briefText={briefText}
+              onBriefChange={handleBriefChange}
+              onRefreshBrief={handleRefreshBrief}
+              onApplySuggestions={handleApplyBriefSuggestions}
+              isAnalyzing={isAnalyzing}
+              analyzeStatus={analyzeStatus}
+              analyzeError={analyzeError}
+              suggestions={analysis?.suggestions ?? null}
+              suggestionChips={analysis?.suggestions?.chips ?? []}
+              hasAudio={Boolean(getActiveHumSource().url)}
+              hasAppliedStudio={briefApplied}
+              hasConnectedProject={Boolean(larkProject.audiotoolName)}
+              isProjectBusy={isProjectBusy}
+              isProcessing={isProcessing}
+              projectError={projectError}
+              onHint={setProjectError}
+            />
           </div>
         </div>
 
@@ -421,9 +462,6 @@ function LarkWorkspace() {
             activeProjectName={larkProject.audiotoolName}
             onUseRawAudio={handleImportFromRawAudio}
             activeRawAudioId={activeRawAudioId}
-            moodLayers={moodLayers}
-            isGeneratingMoodLayers={isGeneratingMoodLayers}
-            onGenerateMoodLayers={handleGenerateMoodLayers}
           />
         </div>
       </main>

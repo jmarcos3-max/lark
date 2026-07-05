@@ -1,29 +1,30 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Zap, Loader2, Save, Plus, RefreshCw, ExternalLink, Layers } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Zap, Loader2, Save, Plus, RefreshCw, ExternalLink } from 'lucide-react';
 import { audiotoolProjectToLark } from '@/lib/lark-project-metadata';
-import { studioDeviceName, TARGET_INSTRUMENTS, availableStudioLayers, WOW_PASS_LAYERS } from '@/lib/lark-instruments';
-import { MOOD_LAYERS_NAME } from '@/lib/lark-copy';
+import { studioDeviceName, TARGET_INSTRUMENTS, availableStudioLayers } from '@/lib/lark-instruments';
+import {
+  defaultGmPresetSlug,
+  gmPresetDisplayName,
+  gmPresetPickerLabel,
+  isGmPresetInstrument,
+  listGmPresetsForInstrument,
+  normalizeGmPresetSlug,
+} from '@/lib/nexus-gm-presets';
 import { openAudiotoolStudio } from '@/lib/open-audiotool-studio';
+import { STUDIO_CARD_TITLE, STUDIO_TAGLINE } from '@/lib/lark-copy';
+import { LARK_MOODS } from '@/lib/lark-moods';
 import LarkStepLabel from '@/components/lark/LarkStepLabel';
-
-const MOODS = [
-  { value: 'Calm', icon: '🌊' },
-  { value: 'Rock', icon: '🎸' },
-  { value: 'Melancholic', icon: '🌧️' },
-  { value: 'Energetic', icon: '⚡' },
-];
 
 export default function ParameterMatrixCard({
   instrument,
   mood,
-  studioLayers = [],
-  wowPassLayers = [],
-  onInstrumentChange,
   onMoodChange,
+  gmPresetSlug,
+  studioLayers = [],
+  onInstrumentChange,
+  onGmPresetChange,
   onStudioLayerToggle,
-  onWowPassLayerToggle,
   onAutomate,
-  onGenerateMoodLayers,
   onNewProject,
   onConnectProject,
   onSave,
@@ -32,17 +33,17 @@ export default function ParameterMatrixCard({
   projectError,
   projectSuccess,
   transformStatus,
-  isGeneratingMoodLayers,
   isAuthenticated,
   onLogin,
+  audiotoolClient,
   cloudProjects,
   onRefreshProjects,
   onTransformHint,
   hasAudio,
   hasInstrument,
-  hasMood,
   currentProject,
   activeProjectName,
+  transformSectionRef,
 }) {
   const [savedMsg, setSavedMsg] = useState(false);
   const [loadingList, setLoadingList] = useState(false);
@@ -129,21 +130,28 @@ export default function ParameterMatrixCard({
 
   const busy = isProjectBusy || isProcessing;
   const hasConnectedProject = Boolean(activeProjectName);
+  const hasMood = Boolean(mood);
   const connectedTitle = currentProject?.title || 'Untitled Track';
   const layerOptions = availableStudioLayers(instrument);
+  const gmPresets = useMemo(
+    () => listGmPresetsForInstrument(instrument, audiotoolClient),
+    [instrument, audiotoolClient],
+  );
+  const activeGmPresetSlug = normalizeGmPresetSlug(
+    instrument,
+    gmPresetSlug ?? defaultGmPresetSlug(instrument),
+  );
+  const gmSoundLabel = gmPresetDisplayName(activeGmPresetSlug) ?? studioDeviceName(instrument);
+
+  const leadDeviceSubtitle = (value) => {
+    if (value === instrument && isGmPresetInstrument(instrument)) return gmSoundLabel;
+    return studioDeviceName(value);
+  };
 
   const transformBlockerMessage = () => {
     if (!hasAudio) return 'Complete Step 1 first — record or import humming in Audio Capture.';
     if (!hasConnectedProject) return 'Complete Step 2 — select an Audiotool project.';
     if (!hasInstrument) return 'Complete Step 3 — choose a lead instrument.';
-    return null;
-  };
-
-  const wowPassBlockerMessage = () => {
-    const block = transformBlockerMessage();
-    if (block) return block;
-    if (!hasMood) return `Pick a mood in Step 6 for ${MOOD_LAYERS_NAME}.`;
-    if (!wowPassLayers.length) return `Select at least one ${MOOD_LAYERS_NAME} type to generate.`;
     return null;
   };
 
@@ -164,20 +172,6 @@ export default function ParameterMatrixCard({
     onAutomate?.();
   };
 
-  const handleGenerateLayersClick = () => {
-    if (busy || isGeneratingMoodLayers) return;
-    if (!isAuthenticated) {
-      onLogin?.();
-      return;
-    }
-    const hint = wowPassBlockerMessage();
-    if (hint) {
-      onTransformHint?.(hint);
-      return;
-    }
-    onGenerateMoodLayers?.();
-  };
-
   const handleProjectSelect = async (e) => {
     const name = e.target.value;
     if (!name) return;
@@ -186,7 +180,7 @@ export default function ParameterMatrixCard({
 
   return (
     <div
-      className="lark-card-glass rounded-2xl p-5 h-full flex flex-col"
+      className="lark-card-glass rounded-2xl p-5 flex flex-col"
       style={{ minHeight: '340px' }}
     >
       <div className="flex items-center gap-2 mb-1">
@@ -195,11 +189,11 @@ export default function ParameterMatrixCard({
           style={{ background: 'linear-gradient(to bottom, #8B5CF6, #4C1D95)' }}
         />
         <span className="text-xs font-semibold uppercase tracking-widest" style={{ color: 'var(--lark-text-muted)' }}>
-          Studio Workflow
+          {STUDIO_CARD_TITLE}
         </span>
       </div>
-      <p className="text-[10px] mb-4 px-1" style={{ color: 'var(--lark-text-subtle)' }}>
-        Step 1 is Audio Capture (left). Complete steps 2–5 to write MIDI in Studio.
+      <p className="text-[10px] mb-4 px-1 leading-relaxed" style={{ color: 'var(--lark-text-subtle)' }}>
+        {STUDIO_TAGLINE} Step 1 is Audio Capture (left).
       </p>
 
       <div className="mb-5">
@@ -311,13 +305,16 @@ export default function ParameterMatrixCard({
           done={hasInstrument}
           className="mb-2.5"
         />
-        <div className="grid grid-cols-4 gap-2">
-          {TARGET_INSTRUMENTS.map(({ value, icon }) => (
+        <div
+          className="grid grid-cols-3 sm:grid-cols-5 gap-1.5 max-h-[172px] overflow-y-auto pr-0.5"
+          style={{ scrollbarWidth: 'thin' }}
+        >
+          {TARGET_INSTRUMENTS.map(({ value, icon, label }) => (
             <button
               key={value}
               onClick={() => onInstrumentChange(value)}
               disabled={busy}
-              className="flex flex-col items-center gap-1.5 py-2.5 px-2 rounded-xl text-xs font-medium transition-all duration-200"
+              className="flex flex-col items-center gap-1 py-2 px-1.5 rounded-xl text-[11px] font-medium transition-all duration-200"
               style={{
                 background: instrument === value
                   ? 'rgba(139,92,246,0.2)'
@@ -330,22 +327,89 @@ export default function ParameterMatrixCard({
                 opacity: busy ? 0.6 : 1,
               }}
             >
-              <span className="text-base">{icon}</span>
-              <span>{value}</span>
+              <span className="text-sm">{icon}</span>
+              <span className="text-center leading-tight">{label ?? value}</span>
               <span
                 className="text-[9px] leading-tight opacity-70"
                 style={{ color: instrument === value ? 'var(--lark-violet-bright)' : 'var(--lark-text-subtle)' }}
               >
-                {studioDeviceName(value)}
+                {leadDeviceSubtitle(value)}
               </span>
             </button>
           ))}
         </div>
+        {isGmPresetInstrument(instrument) && (
+          <div className="mt-2.5">
+            <label
+              className="text-[10px] font-medium uppercase tracking-wide mb-1.5 block px-1"
+              style={{ color: 'var(--lark-text-subtle)' }}
+            >
+              {gmPresetPickerLabel(instrument)}
+            </label>
+            <select
+              value={activeGmPresetSlug ?? defaultGmPresetSlug(instrument)}
+              onChange={(e) => onGmPresetChange?.(e.target.value)}
+              disabled={busy}
+              className="w-full py-2.5 px-3 rounded-xl text-xs outline-none appearance-none cursor-pointer"
+              style={{
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid rgba(139,92,246,0.25)',
+                color: 'var(--lark-text)',
+                opacity: busy ? 0.6 : 1,
+              }}
+            >
+              {gmPresets.map((preset) => (
+                <option key={preset.slug} value={preset.slug}>
+                  {preset.displayName}
+                </option>
+              ))}
+            </select>
+            <p className="text-[9px] mt-1 px-1" style={{ color: 'var(--lark-text-subtle)' }}>
+              {gmPresets.length} Gakki presets from Nexus SDK · same GM library as Studio
+            </p>
+          </div>
+        )}
       </div>
 
       <div className="mb-5">
         <LarkStepLabel
           step={4}
+          title="Pick mood"
+          done={hasMood}
+          className="mb-2.5"
+        />
+        <div className="grid grid-cols-4 gap-1.5">
+          {LARK_MOODS.map(({ value, icon }) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => onMoodChange?.(value)}
+              disabled={busy}
+              className="flex flex-col items-center gap-1 py-2 px-1 rounded-xl text-[10px] font-medium transition-all duration-200"
+              style={{
+                background: mood === value
+                  ? 'rgba(139,92,246,0.2)'
+                  : 'rgba(255,255,255,0.03)',
+                border: mood === value
+                  ? '1px solid rgba(139,92,246,0.5)'
+                  : '1px solid rgba(255,255,255,0.07)',
+                color: mood === value ? 'var(--lark-violet-bright)' : 'var(--lark-text-muted)',
+                opacity: busy ? 0.6 : 1,
+              }}
+            >
+              <span className="text-sm">{icon}</span>
+              <span>{value}</span>
+            </button>
+          ))}
+        </div>
+        <p className="text-[9px] mt-1.5 px-1" style={{ color: 'var(--lark-text-subtle)' }}>
+          Shapes device names and optional AI preview — not required for MIDI transform.
+        </p>
+      </div>
+
+      <div className="mb-5">
+        <LarkStepLabel
+          step={5}
           title="Add Studio layers"
           done={studioLayers.length > 0}
           optional
@@ -399,8 +463,8 @@ export default function ParameterMatrixCard({
         )}
       </div>
 
-      <div className="mb-5">
-        <LarkStepLabel step={5} title="Transform to Studio" className="mb-2.5" />
+      <div ref={transformSectionRef} className="mb-5">
+        <LarkStepLabel step={6} title="Transform to Studio" className="mb-2.5" />
         <button
           type="button"
           onClick={handleTransformClick}
@@ -428,96 +492,7 @@ export default function ParameterMatrixCard({
           ) : (
             <>
               <Zap size={15} />
-              <span>Transform humming → instrument</span>
-            </>
-          )}
-        </button>
-      </div>
-
-      <div className="mb-5">
-        <LarkStepLabel
-          step={6}
-          title={`${MOOD_LAYERS_NAME} (ElevenLabs)`}
-          done={hasMood && wowPassLayers.length > 0}
-          optional
-          className="mb-2.5"
-        />
-        <div className="grid grid-cols-2 gap-2">
-          {MOODS.map(({ value, icon }) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => onMoodChange(mood === value ? null : value)}
-              disabled={busy}
-              className="flex items-center gap-2 py-2.5 px-3 rounded-xl text-xs font-medium transition-all duration-200"
-              style={{
-                background: mood === value
-                  ? 'rgba(139,92,246,0.2)'
-                  : 'rgba(255,255,255,0.03)',
-                border: mood === value
-                  ? '1px solid rgba(139,92,246,0.5)'
-                  : '1px solid rgba(255,255,255,0.07)',
-                color: mood === value ? 'var(--lark-violet-bright)' : 'var(--lark-text-muted)',
-                boxShadow: mood === value ? '0 0 10px rgba(139,92,246,0.18)' : 'none',
-                opacity: busy ? 0.6 : 1,
-              }}
-            >
-              <span>{icon}</span>
-              <span>{value}</span>
-            </button>
-          ))}
-        </div>
-        <p className="text-[10px] mt-3 mb-2 px-1" style={{ color: 'var(--lark-text-subtle)' }}>
-          {MOOD_LAYERS_NAME} types (MP3 — preview here, import to Studio)
-        </p>
-        <div className="grid grid-cols-3 gap-2">
-          {WOW_PASS_LAYERS.map(({ value, icon }) => {
-            const selected = wowPassLayers.includes(value);
-            return (
-              <button
-                key={value}
-                type="button"
-                onClick={() => onWowPassLayerToggle?.(value)}
-                disabled={busy}
-                className="flex flex-col items-center gap-1 py-2 px-1.5 rounded-xl text-[10px] font-medium transition-all duration-200"
-                style={{
-                  background: selected
-                    ? 'rgba(56,189,248,0.12)'
-                    : 'rgba(255,255,255,0.03)',
-                  border: selected
-                    ? '1px solid rgba(56,189,248,0.4)'
-                    : '1px solid rgba(255,255,255,0.07)',
-                  color: selected ? '#7DD3FC' : 'var(--lark-text-muted)',
-                  opacity: busy ? 0.6 : 1,
-                }}
-              >
-                <span className="text-sm">{icon}</span>
-                <span className="text-center leading-tight">{value}</span>
-              </button>
-            );
-          })}
-        </div>
-        <button
-          type="button"
-          onClick={handleGenerateLayersClick}
-          disabled={busy || isGeneratingMoodLayers}
-          title={wowPassBlockerMessage() ?? 'Generate ElevenLabs mood layers'}
-          className="w-full mt-2 py-2.5 rounded-xl flex items-center justify-center gap-2 text-xs font-semibold transition-all duration-200 disabled:opacity-60"
-          style={{
-            background: 'rgba(139,92,246,0.12)',
-            border: '1px solid rgba(139,92,246,0.35)',
-            color: 'var(--lark-violet-bright)',
-          }}
-        >
-          {isGeneratingMoodLayers ? (
-            <>
-              <Loader2 size={14} className="animate-spin" />
-              <span>Generating {MOOD_LAYERS_NAME}…</span>
-            </>
-          ) : (
-            <>
-              <Layers size={14} />
-              <span>Generate {MOOD_LAYERS_NAME}</span>
+              <span>Transform hum → editable music</span>
             </>
           )}
         </button>

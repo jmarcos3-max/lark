@@ -10,6 +10,7 @@ import {
   fetchAudioBlob,
   getAudioDurationMs,
 } from '@/lib/elevenlabs-api';
+import { renderInstrumentalFromHum } from '@/lib/music-render-api';
 import {
   audiotoolProjectToLark,
   encodeLarkMetadata,
@@ -18,7 +19,9 @@ import {
   studioUrlForProject,
 } from '@/lib/lark-project-metadata';
 import { applyNotesWithLayers } from '@/lib/nexus-rhythm-notes';
+import { waitForNexusSync } from '@/lib/nexus-sync';
 import { importWowLayersToStudio } from '@/lib/nexus-import-wow-layers';
+import { fetchGmPreset, normalizeGmPresetSlug } from '@/lib/nexus-gm-presets';
 import { sanitizeStudioLayers, sanitizeWowPassLayers } from '@/lib/lark-instruments';
 import { MOOD_LAYERS_NAME } from '@/lib/lark-copy';
 import { humToneContextFromTranscription } from '@/lib/hum-tone-context';
@@ -35,7 +38,10 @@ export function useAudiotoolProjects() {
   const [projectSuccess, setProjectSuccess] = useState(null);
   const [transformStatus, setTransformStatus] = useState(null);
   const [moodLayers, setMoodLayers] = useState([]);
+  const [instrumentalRender, setInstrumentalRender] = useState(null);
   const [isGeneratingMoodLayers, setIsGeneratingMoodLayers] = useState(false);
+  const [isRenderingInstrumental, setIsRenderingInstrumental] = useState(false);
+  const [renderStatus, setRenderStatus] = useState(null);
   const [isImportingWowLayers, setIsImportingWowLayers] = useState(false);
   const [wowImportStatus, setWowImportStatus] = useState(null);
 
@@ -84,6 +90,12 @@ export function useAudiotoolProjects() {
       }
     }
   }, [moodLayers]);
+
+  useEffect(() => () => {
+    if (instrumentalRender?.url?.startsWith('blob:')) {
+      URL.revokeObjectURL(instrumentalRender.url);
+    }
+  }, [instrumentalRender]);
 
   useEffect(() => {
     if (!authLoading) {
@@ -240,12 +252,17 @@ export function useAudiotoolProjects() {
       const instrument = overrides.target_instrument ?? larkProject.target_instrument;
       const mood = overrides.selected_mood ?? larkProject.selected_mood;
       const sourceUrl = overrides.source_audio_url ?? larkProject.source_audio_url;
+      const productionBrief = overrides.production_brief ?? larkProject.production_brief;
       const studioLayers = sanitizeStudioLayers(
         overrides.studio_layers ?? larkProject.studio_layers,
         instrument,
       );
       const wowPassLayers = sanitizeWowPassLayers(
         overrides.wow_pass_layers ?? larkProject.wow_pass_layers,
+      );
+      const gmPresetSlug = normalizeGmPresetSlug(
+        instrument,
+        overrides.gm_preset_slug ?? larkProject.gm_preset_slug,
       );
 
       const createResult = await at.projects.createProject({
@@ -254,7 +271,9 @@ export function useAudiotoolProjects() {
           description: encodeLarkMetadata({
             source_audio_url: sourceUrl,
             target_instrument: instrument,
+            gm_preset_slug: gmPresetSlug,
             selected_mood: mood,
+            production_brief: productionBrief,
             elevenlabs_output_url: overrides.elevenlabs_output_url ?? larkProject.elevenlabs_output_url,
             studio_layers: studioLayers,
             wow_pass_layers: wowPassLayers,
@@ -314,6 +333,7 @@ export function useAudiotoolProjects() {
       const instrument = overrides.target_instrument ?? larkProject.target_instrument;
       const mood = overrides.selected_mood ?? larkProject.selected_mood;
       const sourceUrl = overrides.source_audio_url ?? larkProject.source_audio_url;
+      const productionBrief = overrides.production_brief ?? larkProject.production_brief;
       const outputUrl = overrides.elevenlabs_output_url ?? larkProject.elevenlabs_output_url;
       const studioLayers = sanitizeStudioLayers(
         overrides.studio_layers ?? larkProject.studio_layers,
@@ -321,6 +341,10 @@ export function useAudiotoolProjects() {
       );
       const wowPassLayers = sanitizeWowPassLayers(
         overrides.wow_pass_layers ?? larkProject.wow_pass_layers,
+      );
+      const gmPresetSlug = normalizeGmPresetSlug(
+        instrument,
+        overrides.gm_preset_slug ?? larkProject.gm_preset_slug,
       );
 
       const updateResult = await at.projects.updateProject({
@@ -330,7 +354,9 @@ export function useAudiotoolProjects() {
           description: encodeLarkMetadata({
             source_audio_url: sourceUrl,
             target_instrument: instrument,
+            gm_preset_slug: gmPresetSlug,
             selected_mood: mood,
+            production_brief: productionBrief,
             elevenlabs_output_url: outputUrl,
             studio_layers: studioLayers,
             wow_pass_layers: wowPassLayers,
@@ -346,6 +372,7 @@ export function useAudiotoolProjects() {
         ...next,
         source_audio_url: sourceUrl,
         target_instrument: instrument,
+        gm_preset_slug: gmPresetSlug,
         selected_mood: mood,
         elevenlabs_output_url: outputUrl,
         studio_layers: studioLayers,
@@ -411,6 +438,7 @@ export function useAudiotoolProjects() {
     sourceUrl: sourceUrlOverride,
     sourceBlob: sourceBlobOverride,
     instrument: instrumentOverride,
+    gmPresetSlug: gmPresetSlugOverride,
     studioLayers: studioLayersOverride,
     mood: moodOverride,
     audiotoolName: audiotoolNameOverride,
@@ -431,6 +459,10 @@ export function useAudiotoolProjects() {
       const studioLayers = sanitizeStudioLayers(
         studioLayersOverride ?? larkProject.studio_layers,
         instrument,
+      );
+      const gmPresetSlug = normalizeGmPresetSlug(
+        instrument,
+        gmPresetSlugOverride ?? larkProject.gm_preset_slug,
       );
       const sourceUrl = sourceUrlOverride ?? larkProject.source_audio_url;
 
@@ -455,6 +487,9 @@ export function useAudiotoolProjects() {
         onProgress: setTransformStatus,
       });
 
+      const at = requireClient();
+      const gmPreset = await fetchGmPreset(at, instrument, gmPresetSlug);
+
       const nexusResult = await applyNotesWithLayers(doc, {
         instrument,
         layers: studioLayers,
@@ -462,11 +497,15 @@ export function useAudiotoolProjects() {
         notePlans: transcription.notePlans,
         regionDuration: transcription.regionDuration,
         bpm: transcription.bpm,
+        gmPreset,
       });
+
+      await waitForNexusSync(doc, { onProgress: setTransformStatus });
 
       setLarkProject((prev) => ({
         ...prev,
         target_instrument: instrument,
+        gm_preset_slug: gmPresetSlug,
         selected_mood: mood,
         studio_layers: studioLayers,
         dawUrl: doc.dawUrl ?? prev.dawUrl,
@@ -475,10 +514,11 @@ export function useAudiotoolProjects() {
       const melodyLabel = transcription.source === 'basic-pitch'
         ? 'Melody from your hum (Basic Pitch).'
         : 'Rhythm only (Basic Pitch unavailable).';
+      const cleanLabel = transcription.cleaned ? ' Hum cleaned for analysis.' : '';
       const layerMsg = nexusResult.layerCount
         ? ` + ${nexusResult.layerCount} Studio layer${nexusResult.layerCount > 1 ? 's' : ''} (${nexusResult.layersWritten.join(', ')})`
         : '';
-      const successMsg = `${melodyLabel} Wrote ${nexusResult.leadNoteCount} lead notes${layerMsg} at ~${nexusResult.bpm} BPM. Press play in Studio from bar 1.`;
+      const successMsg = `${melodyLabel}${cleanLabel} Wrote ${nexusResult.leadNoteCount} lead notes${layerMsg} at ~${nexusResult.bpm} BPM. Open Studio and press play from bar 1.`;
       setProjectSuccess(successMsg);
       setTransformStatus(null);
 
@@ -503,7 +543,79 @@ export function useAudiotoolProjects() {
       setTransformStatus(null);
       setIsProjectBusy(false);
     }
-  }, [isAuthenticated, login, larkProject, ensureProjectDocument]);
+  }, [isAuthenticated, login, larkProject, ensureProjectDocument, requireClient]);
+
+  const renderInstrumental = useCallback(async ({
+    sourceUrl: sourceUrlOverride,
+    sourceBlob: sourceBlobOverride,
+    instrument: instrumentOverride,
+    mood: moodOverride,
+    gmPresetSlug: gmPresetSlugOverride,
+    customPrompt: customPromptOverride,
+  } = {}) => {
+    const instrument = instrumentOverride ?? larkProject.target_instrument;
+    const mood = moodOverride ?? larkProject.selected_mood;
+    const sourceUrl = sourceUrlOverride ?? larkProject.source_audio_url;
+    const customPrompt = customPromptOverride ?? larkProject.production_brief;
+    const gmPresetSlug = normalizeGmPresetSlug(
+      instrument,
+      gmPresetSlugOverride ?? larkProject.gm_preset_slug,
+    );
+
+    if (!sourceUrl) {
+      throw new Error('Record or import humming first.');
+    }
+    if (!instrument) {
+      throw new Error('Choose a lead instrument in Studio (middle column).');
+    }
+    if (!mood) {
+      throw new Error('Pick a mood first.');
+    }
+    if (!customPrompt?.trim()) {
+      throw new Error('Write or refresh your production brief first.');
+    }
+
+    setIsRenderingInstrumental(true);
+    setProjectError(null);
+    setProjectSuccess(null);
+
+    try {
+      const blob = await fetchAudioBlob(sourceUrl, sourceBlobOverride);
+      const result = await renderInstrumentalFromHum({
+        sourceUrl,
+        sourceBlob: blob,
+        instrument,
+        mood,
+        gmPresetSlug,
+        customPrompt,
+        onProgress: setRenderStatus,
+      });
+
+      setInstrumentalRender((prev) => {
+        if (prev?.url?.startsWith('blob:')) URL.revokeObjectURL(prev.url);
+        return result;
+      });
+
+      setLarkProject((prev) => ({
+        ...prev,
+        elevenlabs_output_url: result.url,
+      }));
+
+      const bpmHint = result.humContext?.bpm
+        ? ` (~${Math.round(result.humContext.bpm)} BPM from your hum)`
+        : '';
+      const engine = result.providerLabel ?? 'ElevenLabs';
+      setProjectSuccess(`Rendered with ${engine}${bpmHint}. Press play below.`);
+      return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setProjectError(message);
+      throw err;
+    } finally {
+      setRenderStatus(null);
+      setIsRenderingInstrumental(false);
+    }
+  }, [larkProject]);
 
   const generateMoodLayers = useCallback(async ({
     sourceUrl: sourceUrlOverride,
@@ -704,7 +816,11 @@ export function useAudiotoolProjects() {
     resetLocalProject,
     deleteCloudProject,
     transformHummingToInstrument,
+    renderInstrumental,
     generateMoodLayers,
+    instrumentalRender,
+    isRenderingInstrumental,
+    renderStatus,
     importWowPassToStudio,
     isImportingWowLayers,
     wowImportStatus,

@@ -9,9 +9,11 @@ import {
   Bold,
   Focus,
   Type,
+  Compass,
 } from 'lucide-react';
 import { useTheme } from '@/lib/ThemeContext';
 import { TEXT_SIZE_OPTIONS, useAccessibility } from '@/lib/AccessibilityContext';
+import { requestOnboardingReplay } from '@/lib/lark-onboarding';
 
 const THEME_OPTIONS = [
   { value: 'day', label: 'Day', Icon: Sun },
@@ -244,6 +246,28 @@ export default function AppearanceMenu() {
                 Icon={Icon}
               />
             ))}
+
+            <SectionLabel>Help</SectionLabel>
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                requestOnboardingReplay();
+              }}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left transition-colors"
+              style={{ color: 'var(--lark-text-muted)' }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'rgba(128,128,128,0.06)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'transparent';
+              }}
+            >
+              <Compass size={13} className="shrink-0" style={{ color: 'var(--lark-violet-bright)' }} />
+              <span className="text-xs font-medium" style={{ color: 'var(--lark-text)' }}>
+                Replay onboarding tour
+              </span>
+            </button>
           </div>
         </>
       )}

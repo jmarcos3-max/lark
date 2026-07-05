@@ -6,6 +6,12 @@
 export const NEXUS_DEVICE_BY_INSTRUMENT = {
   Piano: 'gakki',
   Guitar: 'gakki',
+  Lead: 'gakki',
+  Pads: 'gakki',
+  Strings: 'gakki',
+  Wind: 'gakki',
+  FX: 'gakki',
+  Mallets: 'gakki',
   Bass: 'bassline',
   Drums: 'beatbox8',
   Synth: 'heisenberg',
@@ -38,12 +44,18 @@ export function isDrumInstrument(instrument) {
   return DRUM_INSTRUMENTS.has(instrument);
 }
 
-/** What you hummed — one primary lead in Studio. */
+/** What you hummed — one primary lead in Studio (maps to Studio GM categories). */
 export const TARGET_INSTRUMENTS = [
   { value: 'Piano', icon: '🎹', supportsAudiotool: true, supportsElevenLabs: true },
-  { value: 'Guitar', icon: '🎵', supportsAudiotool: true, supportsElevenLabs: true },
   { value: 'Bass', icon: '🎸', supportsAudiotool: true, supportsElevenLabs: true },
   { value: 'Drums', icon: '🥁', supportsAudiotool: true, supportsElevenLabs: true },
+  { value: 'Lead', icon: '🎶', supportsAudiotool: true, supportsElevenLabs: true },
+  { value: 'Pads', icon: '▦', label: 'Pad', supportsAudiotool: true, supportsElevenLabs: true },
+  { value: 'Guitar', icon: '🎵', supportsAudiotool: true, supportsElevenLabs: true },
+  { value: 'Strings', icon: '🎻', supportsAudiotool: true, supportsElevenLabs: true },
+  { value: 'Wind', icon: '🎺', supportsAudiotool: true, supportsElevenLabs: true },
+  { value: 'FX', icon: '💥', supportsAudiotool: true, supportsElevenLabs: true },
+  { value: 'Mallets', icon: '🪇', supportsAudiotool: true, supportsElevenLabs: true },
 ];
 
 /**
@@ -51,10 +63,10 @@ export const TARGET_INSTRUMENTS = [
  * `hideWhenPrimary` skips redundant layers (e.g. Bass layer when lead is Bass).
  */
 export const STUDIO_LAYERS = [
-  { value: 'Pad', icon: '🌌', hideWhenPrimary: null },
+  { value: 'Pad', icon: '🌌', hideWhenPrimary: 'Pads' },
   { value: 'Bass', icon: '🎸', hideWhenPrimary: 'Bass' },
   { value: 'Arp', icon: '✨', hideWhenPrimary: null },
-  { value: 'Synth', icon: '🎛️', hideWhenPrimary: null },
+  { value: 'Synth', icon: '🎛️', hideWhenPrimary: 'Lead' },
   { value: '909', icon: '🪘', hideWhenPrimary: 'Drums' },
 ];
 
@@ -179,6 +191,12 @@ const MOOD_STYLE = {
 };
 
 const ELEVENLABS_INSTRUMENT_LABEL = {
+  Lead: 'synth lead',
+  Pads: 'synth pad',
+  Strings: 'string ensemble',
+  Wind: 'wind instrument',
+  FX: 'sound effect',
+  Mallets: 'mallet instrument',
   Synth: 'synthesizer',
   Analog: 'analog synthesizer',
   Pad: 'synth pad',
@@ -188,14 +206,66 @@ const ELEVENLABS_INSTRUMENT_LABEL = {
   Matrix: 'step sequencer melody',
 };
 
-export function buildElevenLabsMusicPrompt(instrument, mood) {
+export function buildElevenLabsMusicPrompt(instrument, mood, humContext = null, gmPresetName = null) {
+  return buildElevenLabsRenderPrompt({ instrument, mood, humContext, gmPresetName });
+}
+
+/** Suno-style prompt: hum analysis + instrument + mood → full produced instrumental. */
+export function buildElevenLabsRenderPrompt({
+  instrument,
+  mood,
+  humContext = null,
+  gmPresetName = null,
+}) {
   const style = MOOD_STYLE[mood] ?? 'balanced studio mix';
   const label = ELEVENLABS_INSTRUMENT_LABEL[instrument] ?? instrument.toLowerCase();
+  const timbre = gmPresetName ?? label;
+  const bpm = Number.isFinite(humContext?.bpm)
+    ? `at ${Math.round(humContext.bpm)} BPM`
+    : 'steady tempo';
+
+  const melodyLine = humContext?.melodicHint
+    ? `Follow the melodic contour of a ${humContext.melodicHint}, ${bpm}, similar note count and phrasing.`
+    : `One memorable monophonic melody, ${bpm}.`;
+
+  const arrangement = instrument === 'Drums'
+    ? 'Drum kit groove matching the hummed rhythm, punchy and produced.'
+    : `Lead ${timbre} carrying the melody, with subtle bass and light drums supporting, ${style}.`;
+
   return [
-    `Short instrumental ${label} sketch, ${style}.`,
-    'One simple monophonic melody, steady tempo, no drums unless target is drums.',
-    'No vocals. Studio mix, dry enough to layer in a DAW.',
+    `Produce a polished, Suno-quality instrumental from a hummed sketch.`,
+    melodyLine,
+    arrangement,
+    'Instrumental only, no vocals, no spoken words. Professional studio mix.',
   ].join(' ');
+}
+
+/** Shorter prompt for MusicGen — melody comes from the hum audio reference. */
+export function buildMusicGenRenderPrompt({
+  instrument,
+  mood,
+  humContext = null,
+  gmPresetName = null,
+}) {
+  const style = MOOD_STYLE[mood] ?? 'balanced studio mix';
+  const label = ELEVENLABS_INSTRUMENT_LABEL[instrument] ?? instrument.toLowerCase();
+  const timbre = gmPresetName ?? label;
+  const bpm = Number.isFinite(humContext?.bpm)
+    ? `${Math.round(humContext.bpm)} BPM`
+    : 'steady tempo';
+
+  if (instrument === 'Drums') {
+    return `Produced drum kit groove, ${style}, ${bpm}, punchy mix, no vocals`;
+  }
+
+  return [
+    `High-quality ${timbre} instrumental`,
+    style,
+    bpm,
+    'follow the hummed melody',
+    'full arrangement with bass and light drums',
+    'no vocals',
+  ].join(', ');
 }
 
 export function buildElevenLabsLayerPrompt({ instrument, mood, layerType, bpm, humContext }) {

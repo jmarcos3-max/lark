@@ -11,6 +11,7 @@ import {
 import { adaptNotePlansForLayer } from '@/lib/lark-layer-notes';
 import {
   findLarkDevices,
+  findLarkHumReferenceDevices,
   findLarkMixerChannels,
   findLarkNoteTracks,
 } from '@/lib/nexus-instruments';
@@ -56,6 +57,25 @@ function assertDocumentReady(nexusDoc) {
   }
 }
 
+function applyDeviceLayout(t, device, { label, positionX, positionY }) {
+  if (device?.fields?.displayName) {
+    try {
+      t.update(device.fields.displayName, label);
+    } catch {
+      // ignore invalid display name updates
+    }
+  }
+  for (const [key, value] of [['positionX', positionX], ['positionY', positionY]]) {
+    if (device?.fields?.[key]) {
+      try {
+        t.update(device.fields[key], value);
+      } catch {
+        // ignore invalid layout updates
+      }
+    }
+  }
+}
+
 function writeInstrumentTrack(t, {
   instrument,
   label,
@@ -63,6 +83,7 @@ function writeInstrumentTrack(t, {
   orderAmongTracks,
   slotIndex,
   duration,
+  gmPreset = null,
 }) {
   const { deviceType, options: deviceOptions } = nexusDeviceCreateOptions(instrument, {
     label,
@@ -71,8 +92,8 @@ function writeInstrumentTrack(t, {
   });
 
   const collection = t.create('noteCollection', {});
-  const positionX = 140 + (slotIndex % 3) * 240;
-  const positionY = 180 + slotIndex * 120;
+  const positionX = deviceOptions.positionX;
+  const positionY = deviceOptions.positionY;
 
   let notePlayer = null;
   let audioDevice = null;
@@ -95,6 +116,12 @@ function writeInstrumentTrack(t, {
     notesCabled = wireNotesOutputToInput(t, midiDevice, voice);
     notePlayer = midiDevice;
     audioDevice = voice;
+  } else if (gmPreset) {
+    const device = t.createDeviceFromPreset(gmPreset);
+    applyDeviceLayout(t, device, { label, positionX, positionY });
+    primeDeviceForPlayback(t, device);
+    notePlayer = device;
+    audioDevice = device;
   } else {
     const device = t.create(deviceType, deviceOptions);
     primeDeviceForPlayback(t, device);
@@ -145,6 +172,7 @@ export async function applyNotesWithLayers(
     notePlans,
     regionDuration,
     bpm: bpmOverride,
+    gmPreset = null,
   },
 ) {
   assertDocumentReady(nexusDoc);
@@ -159,6 +187,7 @@ export async function applyNotesWithLayers(
     ?? Math.max(Ticks.Bars(1), secondsToTicks(8, bpm) + Ticks.Beat);
 
   const larkDevicesToRemove = findLarkDevices(nexusDoc);
+  const larkHumReferenceToRemove = findLarkHumReferenceDevices(nexusDoc);
   const larkNoteTracksToRemove = findLarkNoteTracks(nexusDoc);
   const larkMixerChannelsToRemove = findLarkMixerChannels(nexusDoc);
   let trackOrder = nextTrackOrder(nexusDoc);
@@ -181,6 +210,13 @@ export async function applyNotesWithLayers(
 
   await nexusDoc.modify((t) => {
     for (const entity of larkDevicesToRemove) {
+      try {
+        t.removeWithDependencies(entity);
+      } catch {
+        // ignore stale entity
+      }
+    }
+    for (const entity of larkHumReferenceToRemove) {
       try {
         t.removeWithDependencies(entity);
       } catch {
@@ -210,6 +246,7 @@ export async function applyNotesWithLayers(
         orderAmongTracks: trackOrder,
         slotIndex: index,
         duration,
+        gmPreset: index === 0 ? gmPreset : null,
       });
       trackOrder += 1;
       totalNoteCount += result.noteCount;

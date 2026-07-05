@@ -3,6 +3,10 @@ import { Mic, MicOff, FileAudio, CheckCircle, Play, Pause, RotateCcw } from 'luc
 import { base44 } from '@/api/base44Client';
 import { appParams } from '@/lib/app-params';
 import LarkStepLabel from '@/components/lark/LarkStepLabel';
+import {
+  isHumCleaningEnabled,
+  setHumCleaningEnabled,
+} from '@/lib/hum-audio-prep';
 
 const UPLOAD_TIMEOUT_MS = 25_000;
 const RECORD_TIMESLICE_MS = 100;
@@ -238,6 +242,35 @@ function WaveformTrimmer({ audioUrl, onReset }) {
         </span>
       </div>
     </div>
+  );
+}
+
+function HumCleanToggle() {
+  const [enabled, setEnabled] = useState(() => isHumCleaningEnabled());
+
+  const toggle = () => {
+    const next = !enabled;
+    setEnabled(next);
+    setHumCleaningEnabled(next);
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      className="w-full mt-3 py-2 px-3 rounded-xl flex items-center justify-between text-[10px] transition-all"
+      style={{
+        background: enabled ? 'rgba(56,189,248,0.08)' : 'rgba(255,255,255,0.03)',
+        border: enabled
+          ? '1px solid rgba(56,189,248,0.3)'
+          : '1px solid rgba(255,255,255,0.08)',
+        color: enabled ? '#7DD3FC' : 'var(--lark-text-muted)',
+      }}
+      title="High-pass, noise gate, and normalize before Basic Pitch / MusicGen"
+    >
+      <span>Clean hum for analysis</span>
+      <span className="font-mono uppercase tracking-wider">{enabled ? 'On' : 'Off'}</span>
+    </button>
   );
 }
 
@@ -514,6 +547,8 @@ export default function AudioCaptureCard({ onAudioReady, importedAudio }) {
         )}
         <WaveformTrimmer audioUrl={capturedAudioUrl} onReset={handleReset} />
 
+        <HumCleanToggle />
+
         <button
           type="button"
           onClick={handleReset}
@@ -629,6 +664,8 @@ export default function AudioCaptureCard({ onAudioReady, importedAudio }) {
           {isUploading ? 'Uploading...' : 'Drop .wav or .mp3 file here'}
         </p>
       </div>
+
+      <HumCleanToggle />
     </div>
   );
 }

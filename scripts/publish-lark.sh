@@ -32,7 +32,7 @@ fi
 
 echo ""
 echo "Done. After push, GitHub Actions deploys Pages automatically."
-echo "  1. Settings → Secrets → VITE_AUDIOTOOL_CLIENT_ID (and optional VITE_ELEVENLABS_API_KEY)"
+echo "  1. Settings → Secrets → VITE_AUDIOTOOL_CLIENT_ID (and optional VITE_ELEVENLABS_API_KEY, VITE_REPLICATE_API_TOKEN)"
 echo "  2. Settings → Pages → source: GitHub Actions"
 echo "  3. Audiotool portal → redirect: https://jmarcos3-max.github.io/lark/"
 echo "  4. Live site: https://jmarcos3-max.github.io/lark/"

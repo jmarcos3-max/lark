@@ -4,10 +4,14 @@ import {
 } from '@/lib/elevenlabs-config';
 import {
   buildElevenLabsLayerPrompt,
-  buildElevenLabsMusicPrompt,
+  buildElevenLabsRenderPrompt,
   defaultWowPassLayerTypes,
   wowPassLayerDurationMs,
 } from '@/lib/lark-instruments';
+import { humToneContextFromTranscription } from '@/lib/hum-tone-context';
+import { briefToRenderPrompt } from '@/lib/production-brief';
+import { isHumCleaningEnabled, resolveHumBlob } from '@/lib/hum-audio-prep';
+import { gmPresetDisplayName } from '@/lib/nexus-gm-presets';
 
 function apiHeaders() {
   const headers = { 'Content-Type': 'application/json' };
@@ -67,20 +71,34 @@ export function getAudioDurationMs(blob) {
 }
 
 /**
- * Generate instrumental audio from instrument + mood (ElevenLabs Music API).
- * Uses your humming length as target duration; melody is interpreted via prompt.
+ * Generate a full produced instrumental (ElevenLabs Music API).
+ * When `humContext` is provided, the prompt follows your analyzed hum.
  */
 export async function composeInstrumentalFromHumming({
   instrument,
   mood,
   durationMs,
+  humContext = null,
+  gmPresetSlug = null,
+  customPrompt = null,
 }) {
   if (!ELEVENLABS_API_KEY && !import.meta.env.DEV) {
     throw new Error('ElevenLabs API key is not configured.');
   }
 
-  const musicLengthMs = Math.min(600_000, Math.max(3_000, Math.round(durationMs)));
-  const prompt = buildElevenLabsMusicPrompt(instrument, mood);
+  const musicLengthMs = Math.min(
+    120_000,
+    Math.max(8_000, Math.round(durationMs ?? 12_000)),
+  );
+  const gmPresetName = gmPresetSlug ? gmPresetDisplayName(gmPresetSlug) : null;
+  const prompt = customPrompt?.trim()
+    ? briefToRenderPrompt(customPrompt, { instrument, mood })
+    : buildElevenLabsRenderPrompt({
+      instrument,
+      mood,
+      humContext,
+      gmPresetName,
+    });
 
   const url = `${ELEVENLABS_API_BASE}/v1/music?output_format=mp3_44100_128`;
   const res = await fetch(url, {
@@ -113,7 +131,67 @@ export async function composeInstrumentalFromHumming({
   if (!blob.size) {
     throw new Error('ElevenLabs returned empty audio.');
   }
-  return blob;
+  const audioBlob = blob.type && blob.type !== 'application/octet-stream'
+    ? blob
+    : new Blob([blob], { type: 'audio/mpeg' });
+
+  return { blob: audioBlob, prompt, musicLengthMs };
+}
+
+/**
+ * Suno-style path: analyze hum → render one polished instrumental MP3.
+ */
+export async function renderInstrumentalFromHum({
+  sourceUrl,
+  sourceBlob,
+  instrument,
+  mood,
+  gmPresetSlug = null,
+  customPrompt = null,
+  onProgress,
+}) {
+  const blob = await fetchAudioBlob(sourceUrl, sourceBlob);
+  const prep = await resolveHumBlob(blob, { onProgress, enabled: isHumCleaningEnabled() });
+  const analysisBlob = prep.blob;
+  const durationMs = await getAudioDurationMs(analysisBlob);
+
+  let humContext = { bpm: null, noteCount: 0 };
+  onProgress?.('Analyzing your hum…');
+  try {
+    const { transcribeHumToNotes } = await import('@/lib/hum-basic-pitch');
+    const transcription = await transcribeHumToNotes(analysisBlob, {
+      instrument,
+      mood,
+      cleanHum: false,
+    });
+    humContext = humToneContextFromTranscription(transcription);
+  } catch {
+    // Render still works with mood + instrument only
+  }
+
+  onProgress?.('Rendering instrumental…');
+  const { blob: audioBlob, prompt, musicLengthMs } = await composeInstrumentalFromHumming({
+    instrument,
+    mood,
+    durationMs,
+    humContext,
+    gmPresetSlug,
+    customPrompt,
+  });
+
+  return {
+    id: `render-${Date.now()}`,
+    label: 'Your instrumental',
+    blob: audioBlob,
+    url: URL.createObjectURL(audioBlob),
+    prompt,
+    humContext,
+    durationMs: musicLengthMs,
+    provider: 'elevenlabs',
+    providerLabel: 'ElevenLabs',
+    cleaned: prep.cleaned,
+    cleanStats: prep.stats,
+  };
 }
 
 async function composeLayerFromPrompt(prompt, durationMs) {

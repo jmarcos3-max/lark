@@ -2,7 +2,9 @@ import React, { useState } from 'react';
 import { useAuth } from '@/lib/AuthContext';
 import { useAudiotool } from '@/lib/AudiotoolContext';
 import AppearanceMenu from '@/components/lark/AppearanceMenu';
-import { LogOut, User, RefreshCw, Loader2 } from 'lucide-react';
+import { STUDIO_NAV_TAGLINE } from '@/lib/lark-copy';
+import { requestOnboardingReplay } from '@/lib/lark-onboarding';
+import { Compass, LogOut, User, RefreshCw, Loader2 } from 'lucide-react';
 
 const LarkMark = () => (
   <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -117,12 +119,37 @@ export default function LarkNavbar({ isConnected }) {
       {/* Center tagline */}
       <div className="hidden md:flex items-center" style={{ color: 'var(--lark-text-muted)' }}>
         <span className="text-xs font-medium tracking-wide">
-          Hum it. Play it.
+          {STUDIO_NAV_TAGLINE}
         </span>
       </div>
 
       {/* Right area */}
       <div className="flex items-center gap-2">
+        {(isAuthenticated || user) && (
+          <button
+            type="button"
+            onClick={() => requestOnboardingReplay()}
+            title="Open the Lark guide"
+            className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg transition-all duration-200"
+            style={{
+              color: 'var(--lark-text-muted)',
+              border: '1px solid var(--lark-border)',
+              background: 'rgba(139,92,246,0.06)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = 'var(--lark-violet-bright)';
+              e.currentTarget.style.borderColor = 'rgba(139,92,246,0.35)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = 'var(--lark-text-muted)';
+              e.currentTarget.style.borderColor = 'var(--lark-border)';
+            }}
+          >
+            <Compass size={13} />
+            <span className="hidden sm:inline font-medium">Guide</span>
+          </button>
+        )}
+
         {/* Appearance & accessibility */}
         <AppearanceMenu />
 

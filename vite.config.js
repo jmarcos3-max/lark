@@ -10,6 +10,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, __dirname, '')
   const elevenLabsKey = env.ELEVENLABS_API_KEY || env.VITE_ELEVENLABS_API_KEY
+  const replicateToken = env.REPLICATE_API_TOKEN || env.VITE_REPLICATE_API_TOKEN
   const isGithubActions = process.env.GITHUB_ACTIONS === 'true'
   const repoName = process.env.GITHUB_REPOSITORY?.split('/')[1] || 'lark'
 
@@ -21,8 +22,9 @@ export default defineConfig(({ mode }) => {
     // Audiotool OAuth requires 127.0.0.1, not localhost — see developer.audiotool.com docs
     host: '127.0.0.1',
     port: 5173,
-    proxy: elevenLabsKey
-      ? {
+    proxy: {
+      ...(elevenLabsKey
+        ? {
           '/api/elevenlabs': {
             target: 'https://api.elevenlabs.io',
             changeOrigin: true,
@@ -34,7 +36,22 @@ export default defineConfig(({ mode }) => {
             },
           },
         }
-      : undefined,
+        : {}),
+      ...(replicateToken
+        ? {
+          '/api/replicate': {
+            target: 'https://api.replicate.com',
+            changeOrigin: true,
+            rewrite: (p) => p.replace(/^\/api\/replicate/, '/v1'),
+            configure: (proxy) => {
+              proxy.on('proxyReq', (proxyReq) => {
+                proxyReq.setHeader('Authorization', `Bearer ${replicateToken}`)
+              })
+            },
+          },
+        }
+        : {}),
+    },
   },
   resolve: {
     alias: {

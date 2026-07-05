@@ -41,6 +41,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           VITE_AUDIOTOOL_CLIENT_ID: ${{ secrets.VITE_AUDIOTOOL_CLIENT_ID }}
           VITE_ELEVENLABS_API_KEY: ${{ secrets.VITE_ELEVENLABS_API_KEY }}
+          VITE_REPLICATE_API_TOKEN: ${{ secrets.VITE_REPLICATE_API_TOKEN }}
         run: npm run build
 
       - name: Verify production build

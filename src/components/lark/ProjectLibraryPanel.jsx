@@ -2,22 +2,17 @@ import React, { useEffect, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import ProjectHistoryCard from '@/components/lark/ProjectHistoryCard';
 import RawAudioLibraryCard from '@/components/lark/RawAudioLibraryCard';
-import MoodLayersCard from '@/components/lark/MoodLayersCard';
 import { listRawAudioEntries } from '@/lib/raw-audio-library';
-
-import { MOOD_LAYERS_NAME } from '@/lib/lark-copy';
 
 const TABS = [
   { id: 'projects', label: 'Audiotool Projects' },
   { id: 'raw', label: 'Raw Audio' },
-  { id: 'layers', label: MOOD_LAYERS_NAME },
 ];
 
 export default function ProjectLibraryPanel(props) {
   const { refreshKey, isAuthenticated, onLogin, onRefreshProjects } = props;
   const [activeTab, setActiveTab] = useState('projects');
   const [rawCount, setRawCount] = useState(0);
-  const layerCount = props.moodLayers?.length ?? 0;
 
   useEffect(() => {
     setRawCount(listRawAudioEntries().length);
@@ -32,7 +27,7 @@ export default function ProjectLibraryPanel(props) {
         <div className="flex items-center gap-1 p-1 rounded-xl" style={{ background: 'rgba(128,128,128,0.06)' }}>
           {TABS.map(({ id, label }) => {
             const active = activeTab === id;
-            const count = id === 'raw' ? rawCount : id === 'layers' ? layerCount : null;
+            const count = id === 'raw' ? rawCount : null;
             return (
               <button
                 key={id}
@@ -83,18 +78,12 @@ export default function ProjectLibraryPanel(props) {
 
       {activeTab === 'projects' ? (
         <ProjectHistoryCard {...props} embedded />
-      ) : activeTab === 'raw' ? (
+      ) : (
         <RawAudioLibraryCard
           refreshKey={refreshKey}
           onLibraryChange={() => setRawCount(listRawAudioEntries().length)}
           onUseForHumming={props.onUseRawAudio}
           activeRawAudioId={props.activeRawAudioId}
-        />
-      ) : (
-        <MoodLayersCard
-          layers={props.moodLayers}
-          isGenerating={props.isGeneratingMoodLayers}
-          onGenerate={props.onGenerateMoodLayers}
         />
       )}
     </div>
