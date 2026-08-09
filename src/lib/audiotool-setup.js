@@ -11,7 +11,6 @@ import {
 /** Checks Lark config against https://developer.audiotool.com/js-package-documentation/ */
 export function getAudiotoolSetupIssues() {
   const issues = [];
-  const redirectUrl = getAudiotoolRedirectUrl();
 
   if (!AUDIOTOOL_CLIENT_ID) {
     issues.push({
@@ -52,13 +51,6 @@ export function getAudiotoolSetupIssues() {
       });
     }
 
-    const isGithubPages = window.location.hostname.endsWith('github.io');
-    if (isGithubPages && AUDIOTOOL_CLIENT_ID) {
-      issues.push({
-        level: 'info',
-        message: `Register this redirect URI at developer.audiotool.com: ${redirectUrl}`,
-      });
-    }
   }
 
   return issues;

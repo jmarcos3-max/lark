@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { useAuth } from '@/lib/AuthContext';
 import { useAudiotool } from '@/lib/AudiotoolContext';
 import AppearanceMenu from '@/components/lark/AppearanceMenu';
 import { STUDIO_NAV_TAGLINE } from '@/lib/lark-copy';
@@ -58,18 +57,13 @@ function AudiotoolLoginButton() {
 }
 
 export default function LarkNavbar({ isConnected }) {
-  const { user, logout: logoutBase44 } = useAuth();
   const { userName, isAuthenticated, logout: logoutAudiotool } = useAudiotool();
   const nexusConnected = isConnected ?? isAuthenticated;
-  const displayName = userName || user?.full_name || user?.email;
+  const displayName = userName;
   const [isSyncing, setIsSyncing] = useState(false);
 
   const handleSignOut = () => {
-    if (isAuthenticated) {
-      logoutAudiotool();
-    } else if (user) {
-      logoutBase44();
-    }
+    if (isAuthenticated) logoutAudiotool();
   };
 
   const handleSync = () => {
@@ -125,7 +119,7 @@ export default function LarkNavbar({ isConnected }) {
 
       {/* Right area */}
       <div className="flex items-center gap-2">
-        {(isAuthenticated || user) && (
+        {isAuthenticated && (
           <button
             type="button"
             onClick={() => requestOnboardingReplay()}
@@ -153,7 +147,7 @@ export default function LarkNavbar({ isConnected }) {
         {/* Appearance & accessibility */}
         <AppearanceMenu />
 
-        {isAuthenticated || user ? (
+        {isAuthenticated ? (
           <div className="flex items-center gap-2">
             {/* Connection Status */}
             <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-lg" style={{ background: 'rgba(128,128,128,0.06)', border: '1px solid var(--lark-border)' }}>

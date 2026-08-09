@@ -1,14 +1,11 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Mic, MicOff, FileAudio, CheckCircle, Play, Pause, RotateCcw } from 'lucide-react';
-import { base44 } from '@/api/base44Client';
-import { appParams } from '@/lib/app-params';
 import LarkStepLabel from '@/components/lark/LarkStepLabel';
 import {
   isHumCleaningEnabled,
   setHumCleaningEnabled,
 } from '@/lib/hum-audio-prep';
 
-const UPLOAD_TIMEOUT_MS = 25_000;
 const RECORD_TIMESLICE_MS = 100;
 const MIN_RECORD_MS = 400;
 
@@ -21,29 +18,6 @@ function getSupportedRecorderMimeType() {
     'audio/ogg;codecs=opus',
   ];
   return candidates.find((type) => MediaRecorder.isTypeSupported(type)) ?? '';
-}
-
-function extensionForMime(mimeType) {
-  if (mimeType.includes('mp4')) return 'mp4';
-  if (mimeType.includes('ogg')) return 'ogg';
-  return 'webm';
-}
-
-function isBase44UploadEnabled() {
-  return Boolean(appParams.appId && appParams.appBaseUrl);
-}
-
-async function uploadToCloud(file) {
-  const result = await Promise.race([
-    base44.integrations.Core.UploadFile({ file }),
-    new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('Upload timed out — check Base44 config')), UPLOAD_TIMEOUT_MS);
-    }),
-  ]);
-  if (!result?.file_url) {
-    throw new Error('Upload did not return a file URL');
-  }
-  return result.file_url;
 }
 
 // Generates fake waveform data for visual display
@@ -281,8 +255,6 @@ export default function AudioCaptureCard({ onAudioReady, importedAudio }) {
   const [capturedFileName, setCapturedFileName] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [isSyncingCloud, setIsSyncingCloud] = useState(false);
-  const [uploadError, setUploadError] = useState(null);
   const [micError, setMicError] = useState(null);
   const mediaRecorderRef = useRef(null);
   const streamRef = useRef(null);
@@ -315,9 +287,7 @@ export default function AudioCaptureCard({ onAudioReady, importedAudio }) {
     captureGenerationRef.current += 1;
     captureBusyRef.current = false;
     setIsUploading(false);
-    setIsSyncingCloud(false);
     setMicError(null);
-    setUploadError(null);
     revokeLocalUrl();
     setCapturedAudioUrl(importedAudio.url);
     setCapturedFileName(importedAudio.name || 'Imported recording');
@@ -327,9 +297,7 @@ export default function AudioCaptureCard({ onAudioReady, importedAudio }) {
     captureGenerationRef.current += 1;
     captureBusyRef.current = false;
     setIsUploading(false);
-    setIsSyncingCloud(false);
     setMicError(null);
-    setUploadError(null);
     revokeLocalUrl();
     setCapturedAudioUrl(null);
     setCapturedFileName(null);
@@ -349,12 +317,11 @@ export default function AudioCaptureCard({ onAudioReady, importedAudio }) {
     onAudioReady(null);
   };
 
-  const finishCapture = useCallback(async (blob, displayName, fileForUpload) => {
+  const finishCapture = useCallback(async (blob, displayName) => {
     if (captureBusyRef.current) return;
     const generation = captureGenerationRef.current;
     captureBusyRef.current = true;
     setIsUploading(false);
-    setUploadError(null);
 
     revokeLocalUrl();
     const localUrl = URL.createObjectURL(blob);
@@ -367,31 +334,7 @@ export default function AudioCaptureCard({ onAudioReady, importedAudio }) {
     setCapturedAudioUrl(localUrl);
     setCapturedFileName(displayName);
     onAudioReady(localUrl, { name: displayName, blob, saveToLibrary: true });
-
-    if (!isBase44UploadEnabled()) {
-      captureBusyRef.current = false;
-      return;
-    }
-
-    setIsSyncingCloud(true);
-    try {
-      const cloudUrl = await uploadToCloud(fileForUpload);
-      if (isCaptureStale(generation)) return;
-      revokeLocalUrl();
-      localBlobUrlRef.current = cloudUrl;
-      setCapturedAudioUrl(cloudUrl);
-      onAudioReady(cloudUrl, { name: displayName, blob, saveToLibrary: false });
-    } catch (err) {
-      if (isCaptureStale(generation)) return;
-      const message = err instanceof Error ? err.message : 'Cloud upload failed';
-      setUploadError(`${message}. Saved in Raw Audio on this device.`);
-      onAudioReady(localUrl, { name: displayName, blob, saveToLibrary: false });
-    } finally {
-      if (!isCaptureStale(generation)) {
-        setIsSyncingCloud(false);
-      }
-      captureBusyRef.current = false;
-    }
+    captureBusyRef.current = false;
   }, [onAudioReady]);
 
   const finalizeRecording = useCallback(() => {
@@ -407,9 +350,7 @@ export default function AudioCaptureCard({ onAudioReady, importedAudio }) {
       return;
     }
 
-    const ext = extensionForMime(mimeType);
-    const file = new File([blob], `recording.${ext}`, { type: mimeType });
-    finishCapture(blob, 'Voice Recording', file);
+    finishCapture(blob, 'Voice Recording');
   }, [finishCapture]);
 
   const startRecording = async () => {
@@ -420,7 +361,6 @@ export default function AudioCaptureCard({ onAudioReady, importedAudio }) {
     }
 
     setMicError(null);
-    setUploadError(null);
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -511,8 +451,7 @@ export default function AudioCaptureCard({ onAudioReady, importedAudio }) {
     if (!file.type.startsWith('audio/')) return;
     if (captureBusyRef.current) return;
     setIsUploading(true);
-    setUploadError(null);
-    await finishCapture(file, file.name, file);
+    await finishCapture(file, file.name);
     setIsUploading(false);
   }, [finishCapture]);
 
@@ -536,15 +475,7 @@ export default function AudioCaptureCard({ onAudioReady, importedAudio }) {
         <div className="flex items-center gap-1.5 text-[10px] mb-2 justify-end" style={{ color: '#86efac' }}>
           <CheckCircle size={11} style={{ color: '#4ade80' }} />
           {capturedFileName}
-          {isSyncingCloud && (
-            <span style={{ color: 'var(--lark-violet-bright)' }}> · syncing…</span>
-          )}
         </div>
-        {uploadError && (
-          <p className="text-[10px] mb-2 leading-snug" style={{ color: '#fbbf24' }}>
-            {uploadError}
-          </p>
-        )}
         <WaveformTrimmer audioUrl={capturedAudioUrl} onReset={handleReset} />
 
         <HumCleanToggle />

@@ -1,12 +1,11 @@
 {
-  "name": "base44-app",
+  "name": "lark",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "cp index.dev.html index.html && vite",
     "build": "vite build",
-    "build:pages": "vite build && node scripts/sync-pages-root.mjs",
     "lint": "eslint . --quiet",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc -p ./jsconfig.json",
@@ -15,8 +14,6 @@
   },
   "dependencies": {
     "@audiotool/nexus": "^0.0.17",
-    "@base44/sdk": "^0.8.30",
-    "@base44/vite-plugin": "^1.0.20",
     "@hello-pangea/dnd": "^17.0.0",
     "@hookform/resolvers": "^4.1.2",
     "@radix-ui/react-accordion": "^1.2.3",

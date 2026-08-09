@@ -1,10 +1,8 @@
 import React from 'react';
-import { Toaster } from "@/components/ui/toaster"
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
-import { AuthProvider } from '@/lib/AuthContext';
 import { ThemeProvider } from '@/lib/ThemeContext';
 import { AccessibilityProvider } from '@/lib/AccessibilityContext';
 import { AudiotoolProvider } from '@/lib/AudiotoolContext';
@@ -90,7 +88,6 @@ function App() {
     <AppErrorBoundary>
       <ThemeProvider>
         <AccessibilityProvider>
-        <AuthProvider>
           <AudiotoolProvider>
             <QueryClientProvider client={queryClientInstance}>
               <Router basename={routerBasename()}>
@@ -100,10 +97,8 @@ function App() {
                   <Route path="*" element={<PageNotFound />} />
                 </Routes>
               </Router>
-              <Toaster />
             </QueryClientProvider>
           </AudiotoolProvider>
-        </AuthProvider>
         </AccessibilityProvider>
       </ThemeProvider>
     </AppErrorBoundary>
